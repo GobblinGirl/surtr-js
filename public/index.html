@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Surtr Simulator</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #eee; }
+    h1 { color: #a32d2d; }
+    .result { background: #252525; padding: 15px; margin: 10px 0; border-radius: 4px; }
+    .events { max-height: 300px; overflow-y: auto; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    pre { background: #111; padding: 10px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Surtr Simulator</h1>
+  <button onclick="runSimulation()">Run Simulation</button>
+  <div id="output"></div>
+
+  <script>
+    const TICKS_PER_S = 30;
+    const DT = 1 / TICKS_PER_S;
+    const MAX_T = 300;
+
+    let _buffUid = 0;
+    function makeBuff({ type, source, mods, expiry }) {
+      return { uid: ++_buffUid, type, source, mods, expiry: { ...expiry } };
+    }
+
+    function resolveAtk(baseAtk, buffs) {
+      let ratio = 0, mult = 1;
+      for (const b of buffs) {
+        for (const m of b.mods) {
+          if (m.stat !== 'atk') continue;
+          const val = (m.suppressedBy && buffs.some(ob => ob.type === m.suppressedBy)) ? 0 : m.value;
+          if (m.kind === 'ratio') ratio += val;
+          if (m.kind === 'mult') mult *= (1 + val);
+        }
+      }
+      return baseAtk * (1 + ratio) * mult;
+    }
+
+    function resolveASPD(buffs) {
+      let aspd = 0;
+      for (const b of buffs) {
+        for (const m of b.mods) {
+          if (m.stat !== 'aspd') continue;
+          const val = (m.suppressedBy && buffs.some(ob => ob.type === m.suppressedBy)) ? 0 : m.value;
+          aspd += val;
+        }
+      }
+      return aspd;
+    }
+
+    function resolveInterval(baseInterval, buffs) {
+      const aspd = 100 + resolveASPD(buffs);
+      return baseInterval / (aspd / 100);
+    }
+
+    function tickBuffs(op, skillActive) {
+      op.buffs = op.buffs.filter(b => {
+        const e = b.expiry;
+        if (e.condition === 'never') return true;
+        if (e.condition === 'ticks') {
+          e.remaining--;
+          return e.remaining > 0;
+        }
+        if (e.condition === 'skill_inactive') return skillActive;
+        return true;
+      });
+    }
+
+    function resolveDamage(atk, damageType, target, resOverride = null) {
+      const def = target.def ?? 0;
+      const res = resOverride !== null ? resOverride : (target.res ?? 0);
+      switch (damageType) {
+        case 'physical': return Math.max(0, atk - def);
+        case 'arts': return atk * (1 - Math.max(0, res) / 100);
+        case 'true': return atk;
+        default: return atk;
+      }
+    }
+
+    function buildSimState(operatorDefs, config) {
+      const ops = {};
+      const opList = [];
+      for (const def of operatorDefs) {
+        const op = {
+          id: def.id,
+          label: def.label,
+          role: def.role ?? 'healer',
+          baseAtk: def.baseAtk,
+          baseInterval: def.baseInterval,
+          maxHP: def.maxHP ?? Infinity,
+          hp: def.maxHP ?? Infinity,
+          buffs: [],
+          attackCooldown: 0,
+          sp: 0,
+          spMax: 0,
+          spCost: 0,
+          spType: 'none',
+          spTimer: 0,
+          activeSkillKey: def.skills?.find(s => s.defaultSelected)?.key ?? null,
+          procCount: 0,
+          totalDamage: 0,
+          totalHealing: 0,
+          _def: def,
+        };
+        ops[def.id] = op;
+        opList.push(op);
+      }
+      return {
+        ops, opList, tick: 0,
+        get t() { return this.tick / TICKS_PER_S; },
+        pendingEvents: [],
+        log: [],
+        config: config ?? {},
+        lifetime: null,
+      };
+    }
+
+    function makeCtx(state) {
+      const ctx = {
+        get tick() { return state.tick; },
+        get t() { return state.t; },
+        ops: state.ops,
+        opList: state.opList,
+        config: state.config,
+        queueEvent(event) {
+          state.pendingEvents.push({ ticksRemaining: event.tickDelay ?? 0, ...event });
+        },
+        makeBuff,
+        addBuff(targetId, buff) {
+          const op = state.ops[targetId];
+          if (op) op.buffs.push(buff);
+        },
+        removeBuff(targetId, buffType) {
+          const op = state.ops[targetId];
+          if (op) op.buffs = op.buffs.filter(b => b.type !== buffType);
+        },
+        refreshBuff(targetId, buff) {
+          const op = state.ops[targetId];
+          if (!op) return;
+          op.buffs = op.buffs.filter(b => b.type !== buff.type);
+          op.buffs.push(buff);
+        },
+        resolveAtk,
+        resolveASPD,
+        resolveInterval,
+        resolveDamage,
+        log(type, data) {
+          state.log.push({ tick: state.tick, t: state.t, type, data });
+        },
+        _state: state,
+      };
+      return ctx;
+    }
+
+    function defaultFindTarget(op, state) {
+      const surtr = state.ops['surtr'];
+      if (!surtr) return null;
+      return surtr.hp < surtr.maxHP ? surtr : null;
+    }
+
+    function defaultFindTargetEnemy(op, state) {
+      return state.ops['dummy_enemy'] ?? null;
+    }
+
+    function defaultCanAttack(op) {
+      return op.attackCooldown === 0;
+    }
+
+    function _defaultUpdateHealth(op, state, pendingEvents) {
+      const incoming = pendingEvents.filter(e => e.ticksRemaining === 0 && e.targetId === op.id);
+      for (const ev of incoming) {
+        if (ev.type === 'heal') {
+          op.hp = Math.min(op.maxHP, op.hp + ev.amount);
+          const healer = state.ops[ev.sourceId];
+          if (healer) healer.totalHealing += ev.amount;
+        } else if (ev.type === 'damage') {
+          op.hp -= ev.amount;
+          const attacker = state.ops[ev.sourceId];
+          if (attacker) attacker.totalDamage += ev.amount;
+        }
+      }
+    }
+
+    async function runSim(operatorDefs, config) {
+      _buffUid = 0;
+      const state = buildSimState(operatorDefs, config);
+      state.pendingEvents = [];
+      const ctx = makeCtx(state);
+
+      for (const op of state.opList) {
+        if (op._def.onInit) op._def.onInit(op, ctx);
+      }
+
+      while (state.tick <= MAX_T * TICKS_PER_S && state.lifetime === null) {
+        for (const op of state.opList) {
+          if (op.attackCooldown > 0) op.attackCooldown = Math.max(0, op.attackCooldown - DT);
+        }
+
+        for (const op of state.opList) {
+          if (op.spType !== 'time') continue;
+          const paused = op._def.isSpTimerPaused ? op._def.isSpTimerPaused(op, ctx) : op.sp >= op.spMax;
+          if (!paused) {
+            op.spTimer++;
+            if (op.spTimer >= 30) {
+              op.spTimer = 0;
+              op.sp = Math.min(op.spMax, op.sp + 1);
+            }
+          }
+        }
+
+        for (const op of state.opList) {
+          if (op._def.onTick) op._def.onTick(op, ctx);
+        }
+
+        const hpSnap = {};
+        for (const op of state.opList) hpSnap[op.id] = op.hp;
+
+        const pendingEvents = state.pendingEvents;
+        for (const op of state.opList) {
+          const canAtk = op._def.canAttack ? op._def.canAttack(op, ctx) : defaultCanAttack(op);
+          if (!canAtk) continue;
+
+          const target = op._def.findTarget
+            ? op._def.findTarget(op, ctx, hpSnap)
+            : (op.role === 'damage' ? defaultFindTargetEnemy(op, state) : defaultFindTarget(op, state));
+          if (!target) continue;
+
+          op.attackCooldown = resolveInterval(op.baseInterval, op.buffs);
+
+          if (op.spType === 'offensive') {
+            if (op._def.onSpend) {
+              op._def.onSpend(op, target, ctx);
+            } else {
+              op.sp = Math.min(op.spMax, op.sp + 1);
+            }
+          }
+
+          if (op._def.onAttack) {
+            op._def.onAttack(op, target, ctx, hpSnap, pendingEvents);
+          }
+        }
+
+        for (const ev of state.pendingEvents) {
+          if (ev.ticksRemaining > 0) ev.ticksRemaining--;
+        }
+
+        for (const op of state.opList) {
+          if (op._def.updateHealth) {
+            op._def.updateHealth(op, state, state.pendingEvents, ctx);
+          } else {
+            _defaultUpdateHealth(op, state, state.pendingEvents);
+          }
+        }
+
+        state.pendingEvents = state.pendingEvents.filter(e => e.ticksRemaining > 0 || e._keep);
+
+        for (const op of state.opList) {
+          const skillActive = op._def.isSkillActive ? op._def.isSkillActive(op, ctx) : false;
+          tickBuffs(op, skillActive);
+          if (op._def.onBuffsExpired) op._def.onBuffsExpired(op, ctx);
+        }
+
+        if (state.lifetime !== null) break;
+        state.tick++;
+      }
+
+      if (state.lifetime === null) state.lifetime = MAX_T;
+      return state;
+    }
+
+    async function runSimulation() {
+      const out = document.getElementById('output');
+      out.innerHTML = '<p>Loading operators...</p>';
+
+      const res = await fetch('/operators');
+      const operatorCode = await res.json();
+
+      const surtr = eval('(function(module) { ' + operatorCode.surtr + '; return module.exports; })({ exports: {} })');
+      const lumen = eval('(function(module) { ' + operatorCode.lumen + '; return module.exports; })({ exports: {} })');
+      const haruka = eval('(function(module) { ' + operatorCode.haruka + '; return module.exports; })({ exports: {} })');
+      const dummy_enemy = eval('(function(module) { ' + operatorCode.dummy_enemy + '; return module.exports; })({ exports: {} })');
+
+      const config = {
+        surtrM3: false,
+        surtrBlocking: false,
+        lumenPrecharged: false,
+        harukaPrecharged: false,
+        enemyDef: 0,
+        enemyRes: 0,
+      };
+
+      out.innerHTML = '<p>Running simulation...</p>';
+      const state = await runSim([surtr, lumen, haruka, dummy_enemy], config);
+
+      const s = state.ops['surtr'];
+      const l = state.ops['lumen'];
+      const h = state.ops['haruka'];
+      const enemy = state.ops['dummy_enemy'];
+
+      let html = '<div class="result">';
+      html += `<p><strong>Lifetime:</strong> ${state.lifetime >= 300 ? '>5 min' : state.lifetime.toFixed(1) + 's'}</p>`;
+      html += `<p><strong>Surtr final HP:</strong> ${s.hp.toFixed(1)} / ${s.maxHP}</p>`;
+      html += `<p><strong>Total healing received by Surtr:</strong> ${(l.totalHealing + h.totalHealing).toFixed(0)} HP</p>`;
+      html += `<p>  Lumen: ${l.totalHealing.toFixed(0)} HP</p>`;
+      html += `<p>  Haruka: ${h.totalHealing.toFixed(0)} HP</p>`;
+      html += `<p><strong>Total damage dealt by Surtr:</strong> ${s.totalDamage.toFixed(0)}</p>`;
+      html += `  (enemy DEF: ${config.enemyDef}, RES: ${config.enemyRes}, -24 from talent)</p>`;
+      html += '</div>';
+
+      html += '<h3>Key events:</h3><div class="result events"><pre>';
+      for (const ev of state.log) {
+        html += `t=${ev.t.toFixed(2)}s  ${ev.type} ${ev.data ?? ''}\n`;
+      }
+      html += '</pre></div>';
+
+      out.innerHTML = html;
+    }
+  </script>
+</body>
+</html>
