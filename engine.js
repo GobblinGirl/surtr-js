@@ -103,11 +103,11 @@ function resolveDamage(atk, damageType, target, resOverride = null) {
 
 // ═══════════════════════════════════════════════════════════
 //  PENDING EVENTS
-//  Heals and damage queued during the attack step,
+//  Heals, regeneration, and damage queued during the attack step,
 //  applied during updateHealth.
 // ═══════════════════════════════════════════════════════════
 // event: {
-//   type: 'heal' | 'damage',
+//   type: 'heal' | 'regen' | 'damage',
 //   sourceId: string,
 //   targetId: string,
 //   amount: number,
@@ -131,7 +131,7 @@ function buildSimState(operatorDefs, config) {
       // identity
       id:           def.id,
       label:        def.label,
-      role:         def.role ?? 'healer',
+      attackType:   def.attackType ?? 'damage',   // 'damage' | 'healing' | 'none'
 
       // stats
       baseAtk:      def.baseAtk,
@@ -257,8 +257,28 @@ function defaultCanAttack(op) {
   return op.attackCooldown === 0;
 }
 
+// Default updateHealth for bards: in addition to normal healing/regen, apply their passive regeneration
+// This is called after normal event processing
+function _defaultBardRegen(op, state, ctx) {
+  if (op._def.bardRegenRate) {
+    const regenPerSec = op.baseAtk * op._def.bardRegenRate;
+    const regenPerTick = regenPerSec / TICKS_PER_S;
+    // Apply to Surtr if alive (in full impl, check range)
+    const surtr = state.ops['surtr'];
+    if (surtr && surtr.hp > 0 && surtr.hp < surtr.maxHP) {
+      state.pendingEvents.push({
+        type:           'regen',
+        sourceId:       op.id,
+        targetId:       surtr.id,
+        amount:         regenPerTick,
+        ticksRemaining: 0,
+      });
+    }
+  }
+}
+
 // Default updateHealth: apply pending events with ticksRemaining === 0.
-// Heals clamp to maxHP; damage subtracts from HP.
+// Heals clamp to maxHP; damage subtracts from HP; regen is like heal but bypasses healReceived modifier.
 // Does NOT handle operator-specific self-effects (those go in onInit self-effect lists).
 function _defaultUpdateHealth(op, state, pendingEvents, ctx) {
   const incoming = pendingEvents.filter(
@@ -270,6 +290,12 @@ function _defaultUpdateHealth(op, state, pendingEvents, ctx) {
       // Track total healing regardless of overheal
       const healer = state.ops[ev.sourceId];
       if (healer) healer.totalHealing += ev.amount;
+    } else if (ev.type === 'regen') {
+      // Regeneration: like heal but bypasses healing received modifiers
+      // Used by Bards - cannot be boosted by healing received buffs
+      op.hp = Math.min(op.maxHP, op.hp + ev.amount);
+      const source = state.ops[ev.sourceId];
+      if (source) source.totalHealing += ev.amount;
     } else if (ev.type === 'damage') {
       op.hp -= ev.amount;
       const attacker = state.ops[ev.sourceId];
@@ -324,6 +350,14 @@ function runSim(operatorDefs, config) {
       if (op._def.onTick) op._def.onTick(op, ctx);
     }
 
+    // ── STEP 1d: Bard passive regeneration (class trait) ───
+    // Check for bardRegenRate in definition (bards have this)
+    for (const op of state.opList) {
+      if (op._def.bardRegenRate) {
+        _defaultBardRegen(op, state, ctx);
+      }
+    }
+
     // ── STEP 2: Target check ─────────────────────────────
     // Snapshot HP values so all targeting sees consistent start-of-tick state
     const hpSnap = {};
@@ -331,16 +365,21 @@ function runSim(operatorDefs, config) {
 
     const pendingEvents = state.pendingEvents;
     for (const op of state.opList) {
+      // Get effective attackType - check for dynamic hook, else use static
+      const effectiveAttackType = op._def.getAttackType
+        ? op._def.getAttackType(op, ctx)
+        : op.attackType;
+
       const canAtk = op._def.canAttack
         ? op._def.canAttack(op, ctx)
-        : defaultCanAttack(op);
+        : (effectiveAttackType === 'none' ? false : defaultCanAttack(op));
       if (!canAtk) continue;
 
       const target = op._def.findTarget
         ? op._def.findTarget(op, ctx, hpSnap)
-        : (op.role === 'damage'
-            ? defaultFindTargetEnemy(op, state)
-            : defaultFindTarget(op, state));
+        : (effectiveAttackType === 'none' ? null
+           : effectiveAttackType === 'healing' ? defaultFindTarget(op, state)
+           : defaultFindTargetEnemy(op, state));
       if (!target) continue;
 
       // ── STEP 3: Set attack cooldown ───────────────────

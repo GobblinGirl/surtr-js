@@ -6,12 +6,12 @@
 // ═══════════════════════════════════════════════════════════
 
 module.exports = {
-  id:    'dummy_enemy',
-  label: 'Enemy',
-  short: 'ENM',
-  color: '#555555',
-  role:  'enemy',
-  desc:  'Configurable dummy target. Tracks cumulative damage received.',
+  id:          'dummy_enemy',
+  label:       'Enemy',
+  short:       'ENM',
+  color:       '#555555',
+  attackType:  'none',   // Doesn't attack - just a damage sink
+  desc:        'Configurable dummy target. Tracks cumulative damage received.',
 
   baseAtk:      0,
   baseInterval: Infinity,

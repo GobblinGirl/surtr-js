@@ -6,12 +6,12 @@
 // ═══════════════════════════════════════════════════════════
 
 module.exports = {
-  id:    'haruka',
-  label: 'Haruka',
-  short: 'HAR',
-  color: '#c0774a',
-  role:  'healer',
-  desc:  'Abjurer · heals instead of attacking when skill active · 75% ATK per heal',
+  id:          'haruka',
+  label:       'Haruka',
+  short:       'HAR',
+  color:       '#c0774a',
+  attackType:  'damage',   // Default; S2 switches to 'healing' (handled in skill logic)
+  desc:        'Abjurer · heals instead of attacking when skill active · 75% ATK per heal',
 
   baseAtk:      559,
   baseInterval: 1.6,
@@ -174,6 +174,11 @@ module.exports = {
 
   isSkillActive(op, ctx) {
     return op.castState === 1 || op.castState === 2;
+  },
+
+  // Abjurer: switches to healing when skill is active
+  getAttackType(op, ctx) {
+    return this.isSkillActive(op, ctx) ? 'healing' : 'damage';
   },
 };
 

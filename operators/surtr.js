@@ -6,12 +6,12 @@
 // ═══════════════════════════════════════════════════════════
 
 module.exports = {
-  id:    'surtr',
-  label: 'Surtr',
-  short: 'SUR',
-  color: '#a32d2d',
-  role:  'damage',
-  desc:  'Duelist · Arts damage · S3 infinite HP drain',
+  id:          'surtr',
+  label:       'Surtr',
+  short:       'SUR',
+  color:       '#a32d2d',
+  attackType:  'damage',
+  desc:        'Duelist · Arts damage · S3 infinite HP drain',
 
   baseAtk:      777,
   baseInterval: 1.27,
@@ -137,15 +137,15 @@ module.exports = {
       op.hp -= drainAmt;
     }
 
-    // 8b: Apply incoming heals (ticksRemaining === 0, targeting surtr)
+    // 8b: Apply incoming heals and regen (ticksRemaining === 0, targeting surtr)
     const incoming = pendingEvents.filter(
-      e => e.ticksRemaining === 0 && e.targetId === op.id && e.type === 'heal'
+      e => e.ticksRemaining === 0 && e.targetId === op.id && (e.type === 'heal' || e.type === 'regen')
     );
     for (const ev of incoming) {
       op.hp = Math.min(maxHP, op.hp + ev.amount);
       const healer = state.ops[ev.sourceId];
       if (healer) healer.totalHealing += ev.amount;
-      if (healer?._def.onHealLanded) healer._def.onHealLanded(healer, op, ev.amount, ctx);
+      if (healer?._def.onHealLanded && ev.type === 'heal') healer._def.onHealLanded(healer, op, ev.amount, ctx);
     }
 
     // 8c: Immortality clamp — if HP ≤ 0 and talent unused, trigger it

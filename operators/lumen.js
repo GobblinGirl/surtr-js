@@ -6,12 +6,12 @@
 // ═══════════════════════════════════════════════════════════
 
 module.exports = {
-  id:    'lumen',
-  label: 'Lumen',
-  short: 'LMN',
-  color: '#4a7ab5',
-  role:  'healer',
-  desc:  'Wandering medic · 100% ATK heal · extended range',
+  id:          'lumen',
+  label:       'Lumen',
+  short:       'LMN',
+  color:       '#4a7ab5',
+  attackType:  'healing',   // Wandering medic - heals instead of attacks
+  desc:        'Wandering medic · 100% ATK heal · extended range',
 
   baseAtk:      579,
   baseInterval: 2.85,
