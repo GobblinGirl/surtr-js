@@ -33,19 +33,18 @@ function resolveAtk(baseAtk, buffs) {
 }
 
 // Compute effective ASPD from buffs.
-// Ratio mods sum additively; multipliers stack multiplicatively.
-// Formula: 100 * (1 + sum(ratio)) * product(1 + mult)
+// ASPD is base 100, buffs stack additively, capped at 20-600.
 function resolveASPD(buffs) {
-  let ratio = 0, mult = 1;
+  let aspd = 100;
   for (const b of buffs) {
     for (const m of b.mods) {
       if (m.stat !== 'aspd') continue;
       const val = (m.suppressedBy && buffs.some(ob => ob.type === m.suppressedBy)) ? 0 : m.value;
-      if (m.kind === 'ratio') ratio += val;
-      if (m.kind === 'mult')  mult  *= (1 + val);
+      if (m.kind === 'ratio') aspd += val;
+      // Note: multipliers not used for ASPD - only additive ratio buffs apply
     }
   }
-  return 100 * (1 + ratio) * mult;
+  return Math.max(20, Math.min(600, aspd));
 }
 
 // Compute effective attack interval given base interval and buff list.
