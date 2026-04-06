@@ -152,6 +152,11 @@ function buildSimState(operatorDefs, config) {
 
       // skill state
       activeSkillKey: def.skills?.find(s => s.defaultSelected)?.key ?? null,
+      
+      // Generic skill state (used by all operators)
+      skillActive:   false,   // is skill currently active
+      skillDuration: 0,       // remaining ticks (0 = infinite)
+      skillStage:    0,       // for multi-stage skills (0 = not started)
 
       // tracking
       procCount:    0,
@@ -260,8 +265,13 @@ function defaultCanAttack(op) {
 // Default updateHealth for bards: in addition to normal healing/regen, apply their passive regeneration
 // This is called after normal event processing
 function _defaultBardRegen(op, state, ctx) {
-  if (op._def.bardRegenRate) {
-    const regenPerSec = op.baseAtk * op._def.bardRegenRate;
+  // Check for dynamic regen rate (e.g., Skadi S2 modifies it)
+  const regenRate = op._def.getBardRegenRate 
+    ? op._def.getBardRegenRate(op, ctx)
+    : op._def.bardRegenRate;
+  
+  if (regenRate) {
+    const regenPerSec = op.baseAtk * regenRate;
     const regenPerTick = regenPerSec / TICKS_PER_S;
     // Apply to Surtr if alive (in full impl, check range)
     const surtr = state.ops['surtr'];
@@ -334,13 +344,22 @@ function runSim(operatorDefs, config) {
 
     // ── STEP 1b: Time-based SP timers ────────────────────
     for (const op of state.opList) {
-      if (op.spType !== 'time') continue;
+      if (op.spType !== 'time' && op.spType !== 'auto') continue;
+      
       const paused = op._def.isSpTimerPaused ? op._def.isSpTimerPaused(op, ctx) : op.sp >= op.spMax;
       if (!paused) {
         op.spTimer++;
         if (op.spTimer >= 30) {
           op.spTimer = 0;
           op.sp = Math.min(op.spMax, op.sp + 1);
+          
+          // Auto-activation for 'auto' type when SP hits max
+          if (op.spType === 'auto' && op.sp >= op.spMax && op._def.isSkillActive) {
+            const isActive = op._def.isSkillActive(op, ctx);
+            if (!isActive && op._def.onTick) {
+              // Let onTick handle activation
+            }
+          }
         }
       }
     }
