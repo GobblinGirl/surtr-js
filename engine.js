@@ -155,7 +155,7 @@ function buildSimState(operatorDefs, config) {
       
       // Generic skill state (used by all operators)
       skillActive:   false,   // is skill currently active
-      skillDuration: 0,       // remaining ticks (0 = infinite)
+      skillDuration: 0,       // remaining ticks
       skillStage:    0,       // for multi-stage skills (0 = not started)
 
       // tracking
@@ -353,11 +353,19 @@ function runSim(operatorDefs, config) {
           op.spTimer = 0;
           op.sp = Math.min(op.spMax, op.sp + 1);
           
-          // Auto-activation for 'auto' type when SP hits max
-          if (op.spType === 'auto' && op.sp >= op.spMax && op._def.isSkillActive) {
-            const isActive = op._def.isSkillActive(op, ctx);
-            if (!isActive && op._def.onTick) {
-              // Let onTick handle activation
+          // Check for skill activation when SP hits max
+          if (op.sp >= op.spMax && op.activeSkillKey && !op.skillActive) {
+            // Find the skill definition
+            const skillDef = op._def.skills?.find(s => s.key === op.activeSkillKey);
+            if (skillDef) {
+              // Check for custom activation logic, otherwise use generic
+              if (op._def.onSkillActivate) {
+                op._def.onSkillActivate(op, ctx, skillDef);
+              } else {
+                // Generic activation: set active and duration from skill definition
+                op.skillActive = true;
+                op.skillDuration = skillDef.duration ?? Infinity;
+              }
             }
           }
         }
@@ -374,6 +382,21 @@ function runSim(operatorDefs, config) {
     for (const op of state.opList) {
       if (op._def.bardRegenRate) {
         _defaultBardRegen(op, state, ctx);
+      }
+    }
+
+    // ── STEP 1e: Skill duration countdown ───────────────────
+    for (const op of state.opList) {
+      if (op.skillActive && Number.isFinite(op.skillDuration) && op.skillDuration > 0) {
+        op.skillDuration--;
+        if (op.skillDuration <= 0) {
+          // Skill expired
+          op.skillActive = false;
+          // Notify operator card if needed
+          if (op._def.onSkillDeactivate) {
+            op._def.onSkillDeactivate(op, ctx);
+          }
+        }
       }
     }
 

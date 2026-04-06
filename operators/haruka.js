@@ -48,6 +48,7 @@ module.exports = {
       spCost:          17,
       spMax:           17,
       spType:          'time',
+      duration:        780, // 26s * 30 TPS - initial duration for 1st cast
       defaultSelected: true,
     },
   ],
@@ -64,13 +65,9 @@ module.exports = {
     const hasS2      = skillKey === 'haruka_s2';
     const precharged = hasS2 && (ctx.config.harukaPrecharged ?? false);
 
-    // Generic skill state
+    // Use generic skill state
     // skillStage: 0 = not started, 1 = 1st cast done (waiting for 2nd), 2 = 2nd cast active
-    // skillDuration: remaining ticks (0 or negative = infinite)
-    // skillActive: boolean
     op.skillStage = 0;
-    op.skillDuration = 0;
-    op.skillActive = false;
 
     if (hasS2) {
       op.spType = 'time';
@@ -81,52 +78,39 @@ module.exports = {
     if (precharged) {
       // Both casts done; permanent S2 active with +40% ATK
       op.sp = 17;
-      op.skillStage = 2;      // 2nd cast active
+      op.skillStage = 2;
       op.skillActive = true;
-      op.skillDuration = 0;   // infinite
+      op.skillDuration = Infinity;
       _applyS2PermBuff(op, ctx);
+    }
+  },
+
+  // Custom skill activation - handles 2-stage logic
+  onSkillActivate(op, ctx, skillDef) {
+    op.skillActive = true;
+    op.skillDuration = skillDef.duration ?? Infinity;
+    op.sp = 0;
+    op.spTimer = 0;
+
+    if (op.skillStage === 0) {
+      // 1st activation
+      op.skillStage = 1;
+      // Duration already set from skillDef.duration
+      ctx.log('haruka_s1_cast', { tick: ctx.tick, t: ctx.t });
+    } else if (op.skillStage === 1) {
+      // 2nd activation - permanent with bonus
+      op.skillStage = 2;
+      op.skillDuration = Infinity;
+      _applyS2PermBuff(op, ctx);
+      ctx.log('haruka_s2_active', { tick: ctx.tick, t: ctx.t });
     }
   },
 
   // SP timer paused during active skill or when SP is full
   isSpTimerPaused(op, ctx) {
     if (op.sp >= op.spMax) return true;
-    if (op.skillActive) return true;  // paused while skill is active
+    if (op.skillActive) return true;
     return false;
-  },
-
-  onTick(op, ctx) {
-    if (op.activeSkillKey !== 'haruka_s2') return;
-
-    // Activate skill when SP is full and not already active
-    if (op.sp >= op.spCost && !op.skillActive) {
-      op.sp = 0;
-      op.spTimer = 0;
-      op.skillActive = true;
-
-      if (op.skillStage === 0) {
-        // 1st activation
-        op.skillStage = 1;
-        op.skillDuration = 780; // 26s * 30 TPS
-        ctx.log('haruka_s1_cast', { tick: ctx.tick, t: ctx.t });
-      } else if (op.skillStage === 1) {
-        // 2nd activation - permanent with bonus
-        op.skillStage = 2;
-        op.skillDuration = Infinity; // infinite
-        _applyS2PermBuff(op, ctx);
-        ctx.log('haruka_s2_active', { tick: ctx.tick, t: ctx.t });
-      }
-    }
-
-    // Count down skill duration (only for timed skills, not infinite)
-    if (op.skillActive && Number.isFinite(op.skillDuration) && op.skillDuration > 0) {
-      op.skillDuration--;
-      if (op.skillDuration <= 0) {
-        // Skill expired
-        op.skillActive = false;
-        // skillStage stays at 1 (1st cast done, waiting for 2nd)
-      }
-    }
   },
 
   // canAttack: Haruka can only heal when skill is active

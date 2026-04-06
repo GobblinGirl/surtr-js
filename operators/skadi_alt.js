@@ -18,7 +18,6 @@ module.exports = {
   maxHP:        1598,
 
   // Class trait: regeneration rate (10% ATK per second)
-  // This is handled by engine.js - no onTick hook needed
   bardRegenRate: 0.10,
 
   // ── Talents ─────────────────────────────────────────────
@@ -39,38 +38,36 @@ module.exports = {
       spCost:          56,
       spMax:           56,
       spType:          'auto',
+      duration:        Infinity,
       defaultSelected: true,
     },
   ],
 
   // ── Internal state ───────────────────────────────────────
-  // op.s2Active: boolean - is S2 currently active
   // op.lastAtk: number - track ATK changes for Inspiration buff updates
 
   onInit(op, ctx) {
-    op.s2Active = false;
     op.lastAtk = op.baseAtk;
-    // Set up SP for S2
-    op.sp = 0;
-    op.spMax = 56;
-    op.spCost = 56;
-    op.spType = 'auto';
   },
 
-  // Check for auto-activation when SP is full
+  // Custom skill activation - applies Inspiration buff
+  onSkillActivate(op, ctx, skillDef) {
+    op.skillActive = true;
+    op.skillDuration = skillDef.duration ?? Infinity;
+    ctx.log('skadi_s2_active', { tick: ctx.tick, t: ctx.t });
+    _applyInspiration(op, ctx);
+  },
+
   isSkillActive(op, ctx) {
-    return op.s2Active;
+    return op.skillActive;
+  },
+
+  // SP timer pauses when skill is active or SP is full
+  isSpTimerPaused(op, ctx) {
+    return op.skillActive || op.sp >= op.spMax;
   },
 
   onTick(op, ctx) {
-    // Auto-activate S2 when SP is full
-    if (!op.s2Active && op.sp >= op.spMax) {
-      op.s2Active = true;
-      op.sp = 0;
-      ctx.log('skadi_s2_active', { tick: ctx.tick, t: ctx.t });
-      _applyInspiration(op, ctx);
-    }
-
     // Check if Skadi's ATK has changed - if so, update Inspiration buff
     const currentAtk = op.baseAtk;
     if (currentAtk !== op.lastAtk) {
@@ -81,14 +78,14 @@ module.exports = {
 
   // Override bard regen rate based on skill
   getBardRegenRate(op, ctx) {
-    return op.s2Active ? 0.20 : 0.10;
+    return op.skillActive ? 0.20 : 0.10;
   },
 };
 
 // ── Private helpers ───────────────────────────────────────
 function _applyInspiration(op, ctx) {
   // Inspiration: 60% of Skadi's ATK as flat ATK buff to all allies
-  const currentAtk = op.baseAtk; // Would use resolveAtk in full impl
+  const currentAtk = op.baseAtk;
   const inspireAtk = currentAtk * 0.60;
 
   // Apply to Surtr for now (skip range check)
@@ -103,7 +100,6 @@ function _applyInspiration(op, ctx) {
       mods:   [
         { stat: 'atk', kind: 'flat', value: inspireAtk },
       ],
-      // Expiration: when Skadi's skill ends (never in sim, but good practice)
       expiry: { condition: 'never' },
     }));
   }

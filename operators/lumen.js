@@ -49,35 +49,22 @@ module.exports = {
       spCost:          50,
       spMax:           50,
       spType:          'time',
+      duration:        Infinity,
       defaultSelected: true,
-    },
-    {
-      key:             'lumen_base',
-      label:           'No skill',
-      description:     'Base healing only.',
-      spCost:          null,
-      spMax:           null,
-      spType:          'none',
-      defaultSelected: false,
     },
   ],
 
   // ── Config ──────────────────────────────────────────────
   // config.lumenPrecharged: bool — S3 active from tick 1
 
-  // ── Internal state keys ──────────────────────────────────
-  // op.s3Active: bool — is S3 currently active
-
-  // ═══════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
   //  HOOKS
-  // ═══════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
 
   onInit(op, ctx) {
     const skillKey   = op.activeSkillKey;
     const hasS3      = skillKey === 'lumen_s3';
     const precharged = hasS3 && (ctx.config.lumenPrecharged ?? false);
-
-    op.s3Active = false;
 
     if (hasS3) {
       op.spType = 'time';
@@ -86,34 +73,28 @@ module.exports = {
 
       if (precharged) {
         // S3 already active — apply buffs immediately
-        op.sp       = 50;
-        op.s3Active = true;
+        op.sp = 50;
+        op.skillActive = true;
+        op.skillDuration = Infinity;
         _applyS3Buffs(op, ctx);
-      } else {
-        op.sp      = 0;
-        op.spTimer = 0;
       }
     }
   },
 
-  // SP timer paused when S3 is active (infinite duration, no need to recharge)
+  // Custom skill activation - applies S3 buffs
+  onSkillActivate(op, ctx, skillDef) {
+    op.skillActive = true;
+    op.skillDuration = skillDef.duration ?? Infinity;
+    _applyS3Buffs(op, ctx);
+    ctx.log('lumen_s3_active', { tick: ctx.tick, t: ctx.t });
+  },
+
+  // SP timer paused when skill is active or SP is full
   isSpTimerPaused(op, ctx) {
-    return op.s3Active || op.sp >= op.spMax;
+    return op.skillActive || op.sp >= op.spMax;
   },
 
-  onTick(op, ctx) {
-    // Check if SP just reached max and S3 should auto-activate
-    if (op.activeSkillKey === 'lumen_s3' && !op.s3Active && op.sp >= op.spCost) {
-      op.s3Active = true;
-      op.sp       = op.spMax; // keep full for display; skill is permanent
-      _applyS3Buffs(op, ctx);
-      ctx.log('lumen_s3_active', { tick: ctx.tick, t: ctx.t });
-    }
-  },
-
-  // canAttack: default (cooldown === 0) — no override needed
-
-  // findTarget: default (Surtr below 100% HP) — no override needed
+  // findTarget: default (Surtr below 100% HP)
 
   onAttack(op, target, ctx, hpSnap, pendingEvents) {
     const healAmt = ctx.resolveAtk(op.baseAtk, op.buffs);
@@ -127,7 +108,7 @@ module.exports = {
   },
 
   isSkillActive(op, ctx) {
-    return op.s3Active;
+    return op.skillActive;
   },
 };
 
