@@ -30,14 +30,16 @@ module.exports = {
     // onTick: (op, ctx) => { /* optional hook */ },
   },
 
-  // ── Talent ─────────────────────────────────────────────
+  // ── Talents ────────────────────────────────────────────
   // Requires deployment to activate; may have additional conditions
-  talent: {
-    label:       'Solo Deployment',
-    description: '+100 ASPD when no other squad members are deployed.',
-    // onInit: (op, ctx) => { /* optional hook */ },
-    // onTick: (op, ctx) => { /* optional hook */ },
-  },
+  talents: [
+    {
+      label:       'Solo Deployment',
+      description: '+100 ASPD when no other squad members are deployed.',
+      // onInit: (op, ctx) => { /* optional hook */ },
+      // onTick: (op, ctx) => { /* optional hook */ },
+    },
+  ],
 
   // ── Module ─────────────────────────────────────────────
   // Always active when module is equipped; provides stat bonuses or effects

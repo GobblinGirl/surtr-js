@@ -8,7 +8,6 @@ const surtr       = require('./operators/surtr');
 const lumen       = require('./operators/lumen');
 const haruka      = require('./operators/haruka');
 const skadiAlt    = require('./operators/skadi_alt');
-const dummyEnemy  = require('./operators/dummy_enemy');
 
 const config = {
   surtrM3:          false,
@@ -21,14 +20,13 @@ const config = {
 
 console.log('Running simulation...\n');
 
-const state = runSim([surtr, lumen, haruka, skadiAlt, dummyEnemy], config);
+const state = runSim([surtr, lumen, haruka, skadiAlt], config);
 
 // ── Results ────────────────────────────────────────────────
 const s      = state.ops['surtr'];
 const l      = state.ops['lumen'];
 const h      = state.ops['haruka'];
 const sk     = state.ops['skadi_alt'];
-const enemy  = state.ops['dummy_enemy'];
 
 console.log(`Lifetime:      ${state.lifetime >= 300 ? '>5 min' : state.lifetime.toFixed(1) + 's'}`);
 console.log(`Surtr final HP: ${s.hp.toFixed(1)} / ${s.maxHP}`);

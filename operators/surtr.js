@@ -178,8 +178,6 @@ module.exports = {
       // Immortality window closed — forced retreat
       ctx.log('retreat', { tick: ctx.tick, t: ctx.t });
       // Signal the engine to end the simulation
-      const state = ctx.ops['surtr']._simState;
-      // We store lifetime on the state object via a ctx reference set during init
       if (ctx._state) ctx._state.lifetime = ctx.t;
     }
   },

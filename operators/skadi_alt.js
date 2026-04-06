@@ -68,17 +68,27 @@ module.exports = {
   },
 
   onTick(op, ctx) {
+    // Bard passive regeneration
+    const regenRate = op.skillActive ? 0.20 : 0.10;
+    const surtr = ctx.ops['surtr'];
+    if (surtr && surtr.hp > 0 && surtr.hp < surtr.maxHP) {
+      const regenPerSec = op.baseAtk * regenRate;
+      const regenPerTick = regenPerSec * ctx.DT;
+      ctx.queueEvent({
+        type:           'regen',
+        sourceId:       op.id,
+        targetId:       surtr.id,
+        amount:         regenPerTick,
+        ticksRemaining: 0,
+      });
+    }
+
     // Check if Skadi's ATK has changed - if so, update Inspiration buff
     const currentAtk = op.baseAtk;
     if (currentAtk !== op.lastAtk) {
       op.lastAtk = currentAtk;
       _applyInspiration(op, ctx);
     }
-  },
-
-  // Override bard regen rate based on skill
-  getBardRegenRate(op, ctx) {
-    return op.skillActive ? 0.20 : 0.10;
   },
 };
 
