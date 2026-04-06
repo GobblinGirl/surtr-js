@@ -32,23 +32,41 @@ function resolveAtk(baseAtk, buffs) {
   return baseAtk * (1 + ratio) * mult;
 }
 
-// Compute effective ASPD bonus from buffs (sum of all aspd ratio mods).
+// Compute effective ASPD from buffs.
+// Ratio mods sum additively; multipliers stack multiplicatively.
+// Formula: 100 * (1 + sum(ratio)) * product(1 + mult)
 function resolveASPD(buffs) {
-  let aspd = 0;
+  let ratio = 0, mult = 1;
   for (const b of buffs) {
     for (const m of b.mods) {
       if (m.stat !== 'aspd') continue;
       const val = (m.suppressedBy && buffs.some(ob => ob.type === m.suppressedBy)) ? 0 : m.value;
-      aspd += val;
+      if (m.kind === 'ratio') ratio += val;
+      if (m.kind === 'mult')  mult  *= (1 + val);
     }
   }
-  return aspd;
+  return 100 * (1 + ratio) * mult;
 }
 
 // Compute effective attack interval given base interval and buff list.
 function resolveInterval(baseInterval, buffs) {
-  const aspd = 100 + resolveASPD(buffs);
+  const aspd = resolveASPD(buffs);
   return baseInterval / (aspd / 100);
+}
+
+// Compute effective healing received multiplier from buffs.
+// Only multiplier types apply (ratio buffs don't affect healing received).
+// Formula: product(1 + mult)
+function resolveHealReceived(buffs) {
+  let mult = 1;
+  for (const b of buffs) {
+    for (const m of b.mods) {
+      if (m.stat !== 'healReceived') continue;
+      const val = (m.suppressedBy && buffs.some(ob => ob.type === m.suppressedBy)) ? 0 : m.value;
+      if (m.kind === 'mult') mult *= (1 + val);
+    }
+  }
+  return mult;
 }
 
 // Tick all buff timers on an operator. Removes expired buffs.
@@ -199,6 +217,7 @@ function makeCtx(state) {
     resolveAtk,
     resolveASPD,
     resolveInterval,
+    resolveHealReceived,
     resolveDamage,
 
     // Logging
@@ -385,6 +404,7 @@ module.exports = {
   resolveAtk,
   resolveASPD,
   resolveInterval,
+  resolveHealReceived,
   resolveDamage,
   TICKS_PER_S,
   DT,
